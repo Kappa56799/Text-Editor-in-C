@@ -1,3 +1,17 @@
+/*
+Name: Kacper Palka
+
+Info:
+A Program written in C that creates a text editor allowing us to read,edit and save files using a Bash terminal.
+It is inspired from kilo text editor as it is lightweight 
+This was created for fun as I  love using C  and systems so I want to eventually create many programs like this in C/possibly create an OS system
+
+Some Things to note:
+"\x1b[H" = is an escape sequence to repostion the cursor back to the top left corner and is commonly used
+https://vt100.net/docs/vt100-ug/chapter3.html#CPR all of the escape sequences can be found here (Yes there is a lot of reading)
+https://github.com/antirez/kilo Based on this project
+
+*/
 #define _DEFAULT_SOURCE
 #define _BSD_SOURCE
 #define _GNU_SOURCE
@@ -19,7 +33,7 @@
 #define KAPPA_VERSION "0.0.1"
 #define TAB_STOP 8 
 #define QUIT_TIMES 3 //how many times you need to press the quit button to quit
-#define ABUF_INIT {NULL, 0}
+#define ABUF_INIT {NULL, 0} //Declare an empty Buffer  used for abuf type
 #define CTRL_KEY(k) ((k) & 0x1f) //sets it to 00011111 in binary to mirror what it does in the terminal (sets the upper 3 bits to 0)
 
 //Enums to allow other keys to work
@@ -139,6 +153,7 @@ int ReadKey() {
     if (read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
     if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
 
+    /* ESC [ sequences. */
     if (seq[0] == '[') {
       if (seq[1] >= '0' && seq[1] <= '9') {
         if (read(STDIN_FILENO, &seq[2], 1) != 1) return '\x1b';
@@ -154,6 +169,7 @@ int ReadKey() {
           }
         }
       } 
+
       else {
         switch (seq[1]) {
           case 'A': return ARROW_UP;
@@ -165,6 +181,7 @@ int ReadKey() {
         }
       }
     } 
+
     else if (seq[0] == 'O') {
       switch (seq[1]) {
         case 'H': return HOME_KEY;
@@ -183,8 +200,10 @@ int getCursorPosition(int *rows, int *cols) {
   char buf[32];
   unsigned int i = 0;
 
+  //reports the cursors location
   if (write(STDOUT_FILENO, "\x1b[6n", 4) != 4) return -1;
 
+  //reads  the response ESC [ rows ; cols R 
   while (i < sizeof(buf) - 1) {
     if (read(STDIN_FILENO, &buf[i], 1) != 1) break;
     if (buf[i] == 'R') break;
@@ -193,6 +212,7 @@ int getCursorPosition(int *rows, int *cols) {
 
   buf[i] = '\0';
 
+  //parses the value
   if (buf[0] != '\x1b' || buf[1] != '[') return -1;
   if (sscanf(&buf[2], "%d;%d", rows, cols) != 2) return -1;
 
@@ -214,7 +234,11 @@ int getWindowSize(int *rows, int *cols) {
   }
 }
 
-/*** row operations ***/
+//Row Stuff
+/*
+converts chars index into a render index
+we use rx %  TAB_STOP  to find out how many columns we are to the right of the last tab stop, and then subtract that from KILO_TAB_STOP - 1 to find out how many columns we are to the left of the next tab stop
+*/
 int RowCXToRX(erow *row, int cx) {
   int rx = 0;
   int j;
@@ -228,6 +252,7 @@ int RowCXToRX(erow *row, int cx) {
   return rx;
 }
 
+//Displays the new postion and allocates memory 
 void UpdateRow(erow *row) {
   int tabs = 0;
   int j;
@@ -235,6 +260,8 @@ void UpdateRow(erow *row) {
   for (j = 0; j < row->size; j++)
     if (row->chars[j] == '\t') tabs++;
 
+  /* Create a version of the row we can directly print on the screen,
+   respecting tabs, substituting non printable characters with '?'. */
   free(row->render);
   row->render = malloc(row->size + tabs*(TAB_STOP - 1) + 1);
 
@@ -254,6 +281,7 @@ void UpdateRow(erow *row) {
   row->rsize = idx;
 }
 
+//insert a new row and allocate memory based on the amount of rows present
 void InsertRow(int at, char *s, size_t len) {
   if (at < 0 || at > E.numrows) return;
 
@@ -273,11 +301,13 @@ void InsertRow(int at, char *s, size_t len) {
   E.dirty++;
 }
 
+//Free the memory used by the row if deleted
 void FreeRow(erow *row) {
   free(row->render);
   free(row->chars);
 }
 
+//Deletes a row and we free the memory using the function we made
 void DelRow(int at) {
   if (at < 0 || at >= E.numrows) return;
   FreeRow(&E.row[at]);
@@ -286,6 +316,7 @@ void DelRow(int at) {
   E.dirty++;
 }
 
+//Inserts the inputted column in the correct place in the row and column
 void RowInsertChar(erow *row, int at, int c) {
   if (at < 0 || at > row->size) at = row->size;
   row->chars = realloc(row->chars, row->size + 2);
@@ -296,6 +327,7 @@ void RowInsertChar(erow *row, int at, int c) {
   E.dirty++;
 }
 
+//Append the string 's' at the end of a row 
 void RowAppendString(erow *row, char *s, size_t len) {
   row->chars = realloc(row->chars, row->size + len + 1);
   memcpy(&row->chars[row->size], s, len);
@@ -305,6 +337,7 @@ void RowAppendString(erow *row, char *s, size_t len) {
   E.dirty++;
 }
 
+//Deletes character from a row depending on its position  in the row and column
 void RowDelChar(erow *row, int at) {
   if (at < 0 || at >= row->size) return;
   memmove(&row->chars[at], &row->chars[at + 1], row->size - at);
@@ -314,19 +347,25 @@ void RowDelChar(erow *row, int at) {
 }
 
 /*** editor operations ***/
-
+//Inserts character into our text editor  based on what row and column we are on
 void InsertChar(int c) {
   if (E.cy == E.numrows) {
     InsertRow(E.numrows, "", 0);
   }
+
   RowInsertChar(&E.row[E.cy], E.cx, c);
   E.cx++;
 }
 
+/* Inserting a newline is slightly complex as we have to handle inserting a
+  newline in the middle of a line, splitting the line as needed */
 void InsertNewline() {
   if (E.cx == 0) {
     InsertRow(E.cy, "", 0);
-  } else {
+  } 
+
+  else {
+    // We are in the middle of a line. Split it between two rows. 
     erow *row = &E.row[E.cy];
     InsertRow(E.cy + 1, &row->chars[E.cx], row->size - E.cx);
     row = &E.row[E.cy];
@@ -334,10 +373,12 @@ void InsertNewline() {
     row->chars[row->size] = '\0';
     UpdateRow(row);
   }
+
   E.cy++;
   E.cx = 0;
 }
 
+//Deletes the character based on the cursors position at that time
 void DelChar() {
   if (E.cy == E.numrows) return;
   if (E.cx == 0 && E.cy == 0) return;
@@ -354,8 +395,11 @@ void DelChar() {
   }
 }
 
-/*** file i/o ***/
 
+/* Turn the editor rows into a single heap-allocated string.
+    Returns the pointer to the heap-allocated string and populate the
+    integer pointed by 'buflen' with the size of the string, escluding
+    the final nulterm. */
 char *RowsToString(int *buflen) {
   int totlen = 0;
   int j;
@@ -375,6 +419,7 @@ char *RowsToString(int *buflen) {
   return buf;
 }
 
+//opens a file that the user wants to edit
 void OpenFile(char *filename) {
   free(E.filename);
   E.filename = strdup(filename);
@@ -398,6 +443,7 @@ void OpenFile(char *filename) {
   E.dirty = 0;
 }
 
+//Save the current file on disk. Return 0 on success, 1 on error. 
 void SaveFile() {
   if (E.filename == NULL) {
     E.filename = Prompt("Save as: %s (ESC to cancel)");
@@ -427,6 +473,10 @@ void SaveFile() {
   SetStatusMessage("Can't save! I/O error: %s", strerror(errno));
 }
 
+/* We define a very simple "append buffer" structure, that is an heap
+    allocated string where we can append to. This is useful in order to
+    write all the escape sequences in a buffer and flush them to the standard
+    output in a single call, to avoid flickering effects. */
 
 void abAppend(struct abuf *ab, const char *s, int len) {
   char *new = realloc(ab->b, ab->len + len);
@@ -508,6 +558,7 @@ void DrawRows(struct abuf *ab) {
   }
 }
 
+//Displays the status bar
 void DrawStatusBar(struct abuf *ab) {
   abAppend(ab, "\x1b[7m", 4);
   char status[80], rstatus[80];
@@ -546,6 +597,8 @@ void DrawMessagebar(struct abuf *ab) {
     abAppend(ab, E.statusmsg, msglen);
 }
 
+/* This function writes the whole screen using VT100 escape characters
+    starting from the logical state of the editor in the global state 'E'. */
 void ClearScreen() {
   Scroll();
 
@@ -568,6 +621,7 @@ void ClearScreen() {
   abFree(&ab);
 }
 
+//Status  Message
 void SetStatusMessage(const char *fmt, ...) {
   va_list ap;
 
