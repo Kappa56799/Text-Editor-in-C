@@ -1,3 +1,7 @@
+#define _DEFAULT_SOURCE
+#define _BSD_SOURCE
+#define _GNU_SOURCE
+
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -17,9 +21,6 @@
 #define QUIT_TIMES 3 //how many times you need to press the quit button to quit
 #define ABUF_INIT {NULL, 0}
 #define CTRL_KEY(k) ((k) & 0x1f) //
-#define _DEFAULT_SOURCE
-#define _BSD_SOURCE
-#define _GNU_SOURCE
 
 //Enums to allow other keys to work
 enum editorKey {
@@ -242,7 +243,7 @@ void UpdateRow(erow *row) {
       row->render[idx++] = ' ';
       while (idx % TAB_STOP != 0) row->render[idx++] = ' ';
     } 
-    
+
     else {
       row->render[idx++] = row->chars[j];
     }
